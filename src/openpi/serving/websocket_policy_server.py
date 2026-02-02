@@ -4,12 +4,25 @@ import logging
 import time
 import traceback
 
+import cv2
+import numpy as np
+
 from openpi_client import base_policy as _base_policy
 from openpi_client import msgpack_numpy
 import websockets.asyncio.server as _server
 import websockets.frames
 
 logger = logging.getLogger(__name__)
+
+
+def _decompress_jpeg(data):
+    """Decompress JPEG bytes to numpy array if needed."""
+    if isinstance(data, (bytes, bytearray)):
+        arr = np.frombuffer(data, np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img is not None:
+            return img
+    return data
 
 
 class WebsocketPolicyServer:
@@ -56,6 +69,11 @@ class WebsocketPolicyServer:
             try:
                 start_time = time.monotonic()
                 obs = msgpack_numpy.unpackb(await websocket.recv())
+
+                # Decompress JPEG images if sent compressed
+                for key in list(obs.keys()):
+                    if "image" in key.lower():
+                        obs[key] = _decompress_jpeg(obs[key])
 
                 infer_time = time.monotonic()
                 action = self._policy.infer(obs)
