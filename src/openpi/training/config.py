@@ -1000,6 +1000,9 @@ class LeRobotSO101DataConfig(DataConfigFactory):
     
     # Default prompt for the task
     default_prompt: str = "Pick up orange ball and drop in pink cup"
+    # If true, use the LeRobot per-episode task string as the prompt.
+    # This is required for multi-task datasets where each episode can have a different instruction.
+    prompt_from_task: bool = False
     
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
@@ -1032,11 +1035,18 @@ class LeRobotSO101DataConfig(DataConfigFactory):
             outputs=[_transforms.AbsoluteActions(delta_action_mask)],
         )
         
-        # Model transforms with default prompt injection
+        base_config = DataConfig(prompt_from_task=self.prompt_from_task) if self.prompt_from_task else None
+
+        # Model transforms with default prompt injection.
+        # If prompt_from_task=True, the data loader injects "prompt" from task_index before this runs,
+        # so InjectDefaultPrompt(None) leaves the per-episode prompt unchanged.
         model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
         
         return dataclasses.replace(
-            self.create_base_config(assets_dirs, model_config),
+            self.create_base_config(assets_dirs, model_config) if base_config is None else dataclasses.replace(
+                self.create_base_config(assets_dirs, model_config),
+                prompt_from_task=base_config.prompt_from_task,
+            ),
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
@@ -1051,6 +1061,23 @@ _CONFIGS.append(
         model=pi0_config.Pi0Config(pi05=True, action_horizon=15),
         data=LeRobotSO101DataConfig(
             repo_id="abdul004/so101_ball_in_cup_v5",
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "gs://openpi-assets/checkpoints/pi05_base/params"
+        ),
+        num_train_steps=5_000,
+        batch_size=32,
+    )
+)
+
+_CONFIGS.append(
+    TrainConfig(
+        name="pi05_so101_multi_task",
+        model=pi0_config.Pi0Config(pi05=True, action_horizon=15),
+        data=LeRobotSO101DataConfig(
+            repo_id="abdul004/so101_multi_task_v1",
+            default_prompt=None,
+            prompt_from_task=True,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
             "gs://openpi-assets/checkpoints/pi05_base/params"
