@@ -311,14 +311,25 @@ class PromptFromLeRobotTask(DataTransformFn):
     """Extracts a prompt from the current LeRobot dataset task."""
 
     # Contains the LeRobot dataset tasks (dataset.meta.tasks).
-    tasks: dict[int, str]
+    tasks: object
 
     def __call__(self, data: DataDict) -> DataDict:
         if "task_index" not in data:
             raise ValueError('Cannot extract prompt without "task_index"')
 
         task_index = int(data["task_index"])
-        if (prompt := self.tasks.get(task_index)) is None:
+        prompt = None
+        if isinstance(self.tasks, dict):
+            prompt = self.tasks.get(task_index)
+            if prompt is None:
+                prompt = {int(v): k for k, v in self.tasks.items()}.get(task_index)
+        elif hasattr(self.tasks, "columns") and "task_index" in self.tasks.columns:
+            # LeRobot 0.4.x exposes tasks as a DataFrame indexed by task text with a task_index column.
+            matches = self.tasks[self.tasks["task_index"] == task_index]
+            if not matches.empty:
+                prompt = str(matches.index[0])
+
+        if prompt is None:
             raise ValueError(f"{task_index=} not found in task mapping: {self.tasks}")
 
         return {**data, "prompt": prompt}
