@@ -999,23 +999,29 @@ class LeRobotSO101DataConfig(DataConfigFactory):
     """Data config for SO-101 robot with LeRobot dataset format."""
     
     # Default prompt for the task
-    default_prompt: str = "Pick up orange ball and drop in pink cup"
+    default_prompt: str | None = "Pick up orange ball and drop in pink cup"
     # If true, use the LeRobot per-episode task string as the prompt.
     # This is required for multi-task datasets where each episode can have a different instruction.
     prompt_from_task: bool = False
     
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
-        # Repack transform - maps LeRobot keys to OpenPi keys
-        # NOTE: No "prompt" mapping - we use default_prompt instead
+        # Repack transform - maps LeRobot keys to OpenPi keys.
+        # For single-task configs, prompt is injected by default_prompt below.
+        # For multi-task configs, PromptFromLeRobotTask injects "prompt" before repacking,
+        # so we preserve it here.
+        repack_structure = {
+            "observation/images/overhead": "observation.images.overhead",
+            "observation/images/wrist": "observation.images.wrist",
+            "observation/state": "observation.state",
+            "action": "action",
+        }
+        if self.prompt_from_task:
+            repack_structure["prompt"] = "prompt"
+
         repack_transform = _transforms.Group(
             inputs=[
-                _transforms.RepackTransform({
-                    "observation/images/overhead": "observation.images.overhead",
-                    "observation/images/wrist": "observation.images.wrist",
-                    "observation/state": "observation.state",
-                    "action": "action",
-                })
+                _transforms.RepackTransform(repack_structure)
             ]
         )
         
@@ -1035,18 +1041,18 @@ class LeRobotSO101DataConfig(DataConfigFactory):
             outputs=[_transforms.AbsoluteActions(delta_action_mask)],
         )
         
-        base_config = DataConfig(prompt_from_task=self.prompt_from_task) if self.prompt_from_task else None
-
         # Model transforms with default prompt injection.
         # If prompt_from_task=True, the data loader injects "prompt" from task_index before this runs,
         # so InjectDefaultPrompt(None) leaves the per-episode prompt unchanged.
         model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
         
+        base_config = dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            prompt_from_task=self.prompt_from_task,
+        )
+
         return dataclasses.replace(
-            self.create_base_config(assets_dirs, model_config) if base_config is None else dataclasses.replace(
-                self.create_base_config(assets_dirs, model_config),
-                prompt_from_task=base_config.prompt_from_task,
-            ),
+            base_config,
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
